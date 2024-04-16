@@ -4,51 +4,11 @@ import {
   CreateSecurityGroupCommand,
   RunInstancesCommand,
   DescribeKeyPairsCommand,
-  paginateDescribeImages,
-  paginateDescribeInstanceTypes,
   DescribeSecurityGroupsCommand,
+  TerminateInstancesCommand,
+  waitUntilInstanceTerminated,
 } from "@aws-sdk/client-ec2";
-import { paginateGetParametersByPath, SSMClient } from "@aws-sdk/client-ssm";
 const ec2Client = new EC2Client();
-const ssmClient = new SSMClient();
-
-const getAmznLinux2AMIs = async () => {
-  const AMIs = [];
-  for await (const page of paginateGetParametersByPath(
-    {
-      client: ssmClient,
-    },
-    { Path: "/aws/service/ami-amazon-linux-latest" }
-  )) {
-    page.Parameters.forEach((param) => {
-      if (param.Name.includes("amzn2")) {
-        AMIs.push(param.Value);
-      }
-    });
-  }
-
-  const imageDetails = [];
-
-  for await (const page of paginateDescribeImages(
-    { client: ec2Client },
-    { ImageIds: AMIs }
-  )) {
-    imageDetails.push(...(page.Images || []));
-  }
-
-  const choices = imageDetails.map((image, index) => ({
-    name: `${image.ImageId} - ${image.Description}`,
-    value: index,
-  }));
-  console.log("choices");
-  // console.log(choices);
-  /**
-   * @type {number}
-   */
-  const selectedIndex = 0;
-
-  return imageDetails[selectedIndex];
-};
 
 const createKeyPair = async (keyPairName) => {
   // Create a key pair in Amazon EC2.
@@ -85,66 +45,47 @@ const describeSecurityGroup = async (securityGroupName) => {
   return SecurityGroups[0];
 };
 
-const getCompatibleInstanceTypes = async (imageDetails) => {
-  const paginator = paginateDescribeInstanceTypes(
-    { client: ec2Client, pageSize: 25 },
-    {
-      Filters: [
-        {
-          Name: "processor-info.supported-architecture",
-          Values: [imageDetails.Architecture],
-        },
-        { Name: "instance-type", Values: ["*.micro"] },
-      ],
-    }
-  );
+const terminateInstance = async (instanceId) => {
+  const command = new TerminateInstancesCommand({
+    InstanceIds: [instanceId],
+  });
 
-  const instanceTypes = [];
-
-  for await (const page of paginator) {
-    if (page.InstanceTypes.length) {
-      instanceTypes.push(...(page.InstanceTypes || []));
-    }
+  try {
+    await ec2Client.send(command);
+    await waitUntilInstanceTerminated(
+      { client: ec2Client },
+      { InstanceIds: [instanceId] }
+    );
+    console.log(`Instance with ID ${instanceId} terminated.\n`);
+  } catch (err) {
+    console.warn(`Failed to terminate instance ${instanceId}.`, err);
   }
-
-  const choices = instanceTypes.map((type, index) => ({
-    name: `${type.InstanceType} - Memory:${type.MemoryInfo.SizeInMiB}`,
-    value: index,
-  }));
-  console.log("Instance Types");
-  console.log(choices);
-  const selectedIndex = 0;
-  return instanceTypes[selectedIndex];
 };
 
 export const handler = async () => {
-  const keyPairName = "ec2-fovus-key-pair";
-  const securityGroupName = "ec2-fovus-security-group";
+  const keyPairName = "ec2-fovus-key-pair-10";
+  const securityGroupName = "ec2-fovus-security-group-10";
   let keyPairId = await createKeyPair(keyPairName);
   let securityGroupId = await createSecurityGroup(securityGroupName);
   const { KeyName } = await describeKeyPair(keyPairName);
-  const { GroupName } = await describeSecurityGroup(securityGroupName);
-  const imageDetails = await getAmznLinux2AMIs();
-  const instanceTypeDetails = await getCompatibleInstanceTypes(imageDetails);
   const command = new RunInstancesCommand({
-    // Your key pair name.
     KeyName: KeyName,
-    // Your security group.
     SecurityGroupIds: [securityGroupId],
-    ImageId: imageDetails.ImageId,
+    ImageId: "ami-0900fe555666598a2",
     InstanceType: "t2.micro",
-    // Ensure only 1 instance launches.
     MinCount: 1,
     MaxCount: 1,
   });
 
   try {
-    instanceId = await ec2Client.send(command);
+    const createResponse = await ec2Client.send(command);
+    instanceId = createResponse["Instances"][0]["InstanceId"];
+    // instanceId = await ec2Client.send(command);
   } catch (err) {
     console.error(err);
   } finally {
     // Clean up.
-    console.log(wrapText("Clean up."));
+    console.log("Clean up.");
     await terminateInstance(instanceId);
   }
   const response = {
