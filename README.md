@@ -5,7 +5,7 @@ Fovus coding submission for AWS CDK setup
 # Steps to build and deploy the project
 
 1. run bootstrap command
-2. run command: cdk cynth
+2. run command: cdk synth
 3. run command: cdk deploy
 
 # Steps to invoke API
