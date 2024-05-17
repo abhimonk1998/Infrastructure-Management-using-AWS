@@ -1,6 +1,6 @@
 # Fovus-coding-submission-abhijeet
 
-Fovus coding submission for AWS CDK setup
+Coding challenge for AWS CDK setup
 
 # Steps to build and deploy the project
 
